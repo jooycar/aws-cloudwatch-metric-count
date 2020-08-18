@@ -6,65 +6,61 @@ AWS.config.update({ region: 'us-east-1' })
 // Create CloudWatch service object
 const cloudwatch = new AWS.CloudWatch({ apiVersion: '2010-08-01' })
 
-var listParams = {}
-cloudwatch.listMetrics(listParams, function (err, data) {
-  if (err) console.log(err, err.stack)
-  else {
-    // fix: max items =500
-    console.log(`Total metrics: ${data.Metrics.length}`)
-    const namespaces = new Set()
-    for (const metric of data.Metrics) {
-      if (!namespaces.has(metric.Namespace)) {
-        namespaces.add(metric.Namespace)
+async function main () {
+  const metrics = await getMetrics(1)
+  const sum = await getSum(metrics)
+  for (const val of sum) {
+    console.log(val)
+  }
+  return sum.length
+}
+
+async function getSum (metrics) {
+  const sum = new Map()
+  const promises = []
+  for (const metric of metrics) {
+    promises.push(getSingleSum(metric))
+  }
+  await Promise.all(promises).then(values => {
+    console.log('len1: ' + values.length)
+    for (const val of values) {
+      if (val.Datapoints && val.Datapoints[0]) {
+        if (sum.has(val.Label)) {
+          sum.set(val.Label, sum.get(val.Label) + val.Datapoints[0].SampleCount)
+        } else {
+          sum.set(val.Label, val.Datapoints[0].SampleCount)
+        }
       }
     }
-    console.log(`Total namespaces: ${namespaces.size}`)
-    for (const ns of namespaces) {
-      listParams = { Namespace: ns }
-      // 500 limit again
-      cloudwatch.listMetrics(listParams, function (err, data) {
-        if (err) { console.log(err, err.stack) } else {
-          // console.log(`Namespace ${ns}: ${data.Metrics.length} metrics`)
-          countAllMetrics(ns, data.Metrics)
-        }
-      })
+    console.log('len2: ' + sum.size)
+  })
+  return sum
+}
+const today = new Date()
+const aWeekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
+
+async function getSingleSum (metric) {
+  const params = { Statistics: ['SampleCount'], StartTime: aWeekAgo, EndTime: today, Period: 60 * 60 * 24 * 7, Namespace: metric.Namespace, Dimensions: metric.Dimensions, MetricName: metric.MetricName }
+  return cloudwatch.getMetricStatistics(params).promise()
+}
+
+async function getMetrics (count, token) {
+  console.log(count)
+  var params = {}
+  if (token) {
+    params.NextToken = token
+  }
+  const metrics = []
+  const data = await cloudwatch.listMetrics(params).promise()
+  if (data && data.Metrics) {
+    metrics.push(...data.Metrics)
+    if (data.NextToken) {
+      metrics.push(...await getMetrics(count + 1, data.NextToken))
     }
   }
-})
-
-function countAllMetrics (ns, metrics) {
-  const today = new Date()
-  const aWeekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
-  let count = 0
-  for (const metric of metrics) {
-    const params = {
-      Namespace: metric.Namespace,
-      MetricName: metric.MetricName,
-      StartTime: aWeekAgo,
-      EndTime: today,
-      Period: 60 * 60 * 24 * 30,
-      Statistics: [
-        'SampleCount'
-
-      ]
-    }
-    cloudwatch.getMetricStatistics(params, function (err, data) {
-      if (err) { console.log(err) } else {
-         //console.log(data)
-        if (data.Datapoints) {
-           //  console.log(data.Datapoints)
-          for (const point of data.Datapoints) {
-            // console.log("in for")
-            // console.log(point)
-            // console.log(point.SampleCount)
-            console.log(`${ns} \t ${point.SampleCount}`)
-            //count = count + point.SampleCount
-          }
-        }
-        //console.log(`${metric.MetricName} => ${count}`)
-      }
-    })
-    //console.log(`${ns} => ${count}`)
+  return metrics
 }
-  
-}
+
+main()
+  .then(data => { console.log(`data: ${data}`) })
+  .catch(err => { console.error(`error: ${err}`) })
