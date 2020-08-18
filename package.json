@@ -1,0 +1,15 @@
+{
+  "name": "aws-cloudwatch-metric-count",
+  "version": "1.0.0",
+  "description": "AWS CloudWatch Metric counter to identify cost/usage",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "repository": {
+    "type" : "git",
+    "url" : "https://github.com/jooycar/aws-cloudwatch-metric-count.git"
+  }
+}
