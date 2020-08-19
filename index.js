@@ -9,7 +9,8 @@ const cloudwatch = new AWS.CloudWatch({ apiVersion: '2010-08-01' })
 async function main () {
   const metrics = await getMetrics(1)
   const sum = await getSum(metrics)
-  for (const val of sum) {
+  const sorted = new Map([...sum.entries()].sort((a, b) => b[1] - a[1]))
+  for (const val of sorted) {
     console.log(val)
   }
   return sum.length
