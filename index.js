@@ -1,4 +1,5 @@
 const AWS = require('aws-sdk')
+const promiseUtils = require('blend-promise-utils')
 
 // Set the region
 AWS.config.update({ region: 'us-east-1' })
@@ -9,7 +10,16 @@ const DEBUG = false
 const cloudwatch = new AWS.CloudWatch({ apiVersion: '2010-08-01' })
 
 async function main () {
-  const metrics = await getMetrics(1)
+  let iteration = 1
+  let { metrics, nextToken } = await getMetrics(iteration)
+  while (nextToken !== undefined) {
+    const { metrics: curMetrics, nextToken: curToken } = await getMetrics(++iteration, nextToken)
+    nextToken = curToken
+    metrics.push(...curMetrics)
+    if (DEBUG) {
+      break
+    }
+  }
   const sum = await getSum(metrics)
   const sorted = new Map([...sum.entries()].sort((a, b) => b[1] - a[1]))
   for (const [key, value] of sorted.entries()) {
@@ -20,25 +30,32 @@ async function main () {
 
 async function getSum (metrics) {
   const sum = new Map()
-  const promises = []
   console.log('Getting Sample Counts')
-  for (const metric of metrics) {
-    promises.push(getSingleSum(metric))
-  }
-  console.log('Waiting for Sample Counts')
-  await Promise.all(promises).then(values => {
-    console.log('total metrics: ' + values.length)
-    for (const val of values) {
-      if (val.Datapoints && val.Datapoints[0]) {
-        if (sum.has(val.Label)) {
-          sum.set(val.Label, sum.get(val.Label) + val.Datapoints[0].SampleCount)
-        } else {
-          sum.set(val.Label, val.Datapoints[0].SampleCount)
-        }
+  let i = 0
+  const rawSampleCounts = await promiseUtils.mapLimit(metrics, 25, async (metric) => {
+    i++
+    if (i % 1000 === 0) {
+      console.log(`Successfully retrieved ${i} sample counts`)
+    }
+    try {
+      return await getSingleSum(metric)
+    } catch (err) {
+      console.log(`Received an error for a request ${JSON.stringify(err)}`)
+      return undefined
+    }
+  })
+  const sampleCounts = rawSampleCounts.filter(x => x !== undefined)
+  console.log('total metrics: ' + sampleCounts.length)
+  for (const sampleCount of sampleCounts) {
+    if (sampleCount.Datapoints && sampleCount.Datapoints[0]) {
+      if (sum.has(sampleCount.Label)) {
+        sum.set(sampleCount.Label, sum.get(sampleCount.Label) + sampleCount.Datapoints[0].SampleCount)
+      } else {
+        sum.set(sampleCount.Label, sampleCount.Datapoints[0].SampleCount)
       }
     }
-    console.log('total de-duplicated metrics: ' + sum.size)
-  })
+  }
+  console.log('total de-duplicated metrics: ' + sum.size)
   return sum
 }
 const today = new Date()
@@ -51,7 +68,7 @@ async function getSingleSum (metric) {
 
 async function getMetrics (count, token) {
   console.log(`Iteration #${count}, ${500 * (count - 1)} metrics`)
-  var params = {}
+  const params = {}
   if (token) {
     params.NextToken = token
   }
@@ -59,13 +76,11 @@ async function getMetrics (count, token) {
   const data = await cloudwatch.listMetrics(params).promise()
   if (data && data.Metrics) {
     metrics.push(...data.Metrics)
-    if (data.NextToken) {
-      if (!DEBUG) {
-        metrics.push(...await getMetrics(count + 1, data.NextToken))
-      }
-    }
   }
-  return metrics
+  return {
+    metrics,
+    nextToken: data.NextToken
+  }
 }
 
 main()
